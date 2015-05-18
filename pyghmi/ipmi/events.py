@@ -367,8 +367,9 @@ class EventHandler(object):
 
     :param sdr: An SDR object (per pyghmi.ipmi.sdr) matching the target BMC SDR
     """
-    def __init__(self, sdr):
+    def __init__(self, sdr, ipmicmd):
         self._sdr = sdr
+        self._ipmicmd = ipmicmd
 
     def _decode_standard_event(self, eventdata, event):
         # Ignore the generator id for now..
@@ -376,33 +377,55 @@ class EventHandler(object):
             raise pygexc.PyghmiException(
                 'Unrecognized Event message version {0}'.format(eventdata[2]))
         sensor_type = eventdata[3]
+        event['component_id'] = eventdata[4]
         try:
-            event['entity'] = self._sdr.sensors[eventdata[4]].name
+            event['component'] = self._sdr.sensors[eventdata[4]].name
         except KeyError:
-            event['entity'] = 'Sensor {0}'.format(eventdata[4])
+            if eventdata[4] == 0:
+                event['component'] = None
+            else:
+                event['component'] = 'Sensor {0}'.format(eventdata[4])
         event['deassertion'] = (eventdata[5] & 0b10000000 == 0b10000000)
         event_data = eventdata[6:]
+        event['event_data_bytes'] = event_data
         event_type = eventdata[5] & 0b1111111
         byte2type = (event_data[0] & 0b11000000) >> 6
         byte3type = (event_data[0] & 0b110000) >> 4
         if byte2type == 1:
             event['triggered_value'] = event_data[1]
         evtoffset = event_data[0] & 0b1111
+        event['event_type_byte'] = event_type
         if event_type <= 0xc:
+            event['component_type_id'] = sensor_type
+            event['event_id'] = '{0}.{1}'.format(event_type, evtoffset)
             # use generic offset decode for event description
-            event['entity_type'] = ipmiconst.sensor_type_codes.get(
+            event['component_type'] = ipmiconst.sensor_type_codes.get(
                 sensor_type, '')
             evreading = ipmiconst.generic_type_offsets.get(
                 event_type, {}).get(evtoffset, {})
-            event['event'] = evreading.get('desc', '')
-            event['severity'] = evreading.get('severity', pygconst.Health.Ok)
+            if event['deassertion']:
+                event['event'] = evreading.get('deassertion_desc', '')
+                event['severity'] = evreading.get(
+                    'deassertion_severity', pygconst.Health.Ok)
+            else:
+                event['event'] = evreading.get('desc', '')
+                event['severity'] = evreading.get(
+                    'severity', pygconst.Health.Ok)
         elif event_type == 0x6f:
-            event['entity_type'] = ipmiconst.sensor_type_codes.get(
+            event['component_type_id'] = sensor_type
+            event['event_id'] = '{0}.{1}'.format(event_type, evtoffset)
+            event['component_type'] = ipmiconst.sensor_type_codes.get(
                 sensor_type, '')
             evreading = ipmiconst.sensor_type_offsets.get(
                 sensor_type, {}).get(evtoffset, {})
-            event['event'] = evreading.get('desc', '')
-            event['severity'] = evreading.get('severity', pygconst.Health.Ok)
+            if event['deassertion']:
+                event['event'] = evreading.get('deassertion_desc', '')
+                event['severity'] = evreading.get(
+                    'deassertion_severity', pygconst.Health.Ok)
+            else:
+                event['event'] = evreading.get('desc', '')
+                event['severity'] = evreading.get(
+                    'severity', pygconst.Health.Ok)
         if event_type == 1:  # threshold
             if byte3type == 1:
                 event['threshold_value'] = event_data[2]
@@ -419,7 +442,8 @@ class EventHandler(object):
         event = {}
         if selentry[2] == 2 or (0xc0 <= selentry[2] <= 0xdf):
             # Either standard, or at least the timestamp is standard
-            event['timecode'] = struct.unpack_from('<I', selentry[3:7])[0]
+            event['timecode'] = struct.unpack_from('<I', buffer(selentry[3:7])
+                                                   )[0]
         if selentry[2] == 2:  # ipmi defined standard format
             self._decode_standard_event(selentry[7:], event)
         elif 0xc0 <= selentry[2] <= 0xdf:
@@ -429,6 +453,9 @@ class EventHandler(object):
             # In this class of OEM message, all bytes are OEM, interpretation
             # is wholly left up to the OEM layer, using the OEM ID of the BMC
             event['oemdata'] = selentry[3:]
+        self._ipmicmd._oem.process_event(event)
+        del event['event_type_byte']
+        del event['event_data_bytes']
         return event
 
     def _fetch_entries(self, ipmicmd, startat, targetlist, rsvid=0):
@@ -443,7 +470,7 @@ class EventHandler(object):
             except pygexc.IpmiException as pi:
                 if pi.ipmicode == 203:
                     break
-            curr = struct.unpack_from('<H', rsp['data'][:2])[0]
+            curr = struct.unpack_from('<H', buffer(rsp['data'][:2]))[0]
             targetlist.append(self._sel_decode(rsp['data'][2:]))
         return endat
 

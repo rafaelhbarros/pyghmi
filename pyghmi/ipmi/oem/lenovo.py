@@ -25,6 +25,15 @@ class OEMHandler(generic.OEMHandler):
         # variations.  For example System X versus Thinkserver
         self.oemid = oemid
 
+    def process_event(self, event):
+        evdata = event['event_data_bytes']
+        # For HDD bay events, the event data 2 is the bay, modify
+        # the description to be more specific
+        if (event['event_type_byte'] == 0x6f and
+                (evdata[0] & 0b11000000) == 0b10000000 and
+                event['component_type_id'] == 13):
+            event['component'] += ' {0}'.format(evdata[1] & 0b11111)
+
     def process_fru(self, fru):
         if fru is None:
             return fru
@@ -42,16 +51,19 @@ class OEMHandler(generic.OEMHandler):
                 fru['MAC Address 1'] = mac1
             if mac2 not in ('00:00:00:00:00:00', ''):
                 fru['MAC Address 2'] = mac2
+            try:
             # The product_extra field is UUID as the system would present
             # in DMI.  This is different than the two UUIDs that
             # it returns for get device and get system uuid...
-            byteguid = fru['product_extra'][0]
+                byteguid = fru['product_extra'][0]
             # It can present itself as claiming to be ASCII when it
             # is actually raw hex.  As a result it triggers the mechanism
             # to strip \x00 from the end of text strings.  Work around this
             # by padding with \x00 to the right if the string is not 16 long
-            byteguid.extend('\x00' * (16 - len(byteguid)))
-            fru['UUID'] = util.decode_wireformat_uuid(byteguid)
+                byteguid.extend('\x00' * (16 - len(byteguid)))
+                fru['UUID'] = util.decode_wireformat_uuid(byteguid)
+            except (AttributeError, KeyError):
+                pass
             return fru
         else:
             fru['oem_parser'] = None

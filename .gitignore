@@ -3,6 +3,7 @@ ChangeLog
 dist/
 python_ipmi.egg-info/
 build
+pyghmi.egg-info/
 .tox
 .eggs
 *.pyc

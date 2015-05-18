@@ -542,6 +542,25 @@ class Command(object):
                 raise exc.IpmiException(rsp['error'], code=rsp['code'])
             yield self._sdr.sensors[sensor].decode_sensor_reading(rsp['data'])
 
+    def get_sensors_thresholds(self):
+        if self._sdr is None:
+            self._sdr = sdr.SDR(self)
+        for sensor in self._sdr.get_sensor_numbers():
+            rsp = self.raw_command(command=0x27, netfn=4, data=(sensor,))
+            if 'error' in rsp:
+                if rsp['code'] == 203 or rsp['code'] == 205:
+                    # Sensor does not thresholds or doesn't exist, optional dev
+                    continue
+                raise exc.IpmiException(rsp['error'], code=rsp['code'])
+            entry = self._sdr.sensors[sensor]
+            entry.lower_non_critical_threshold = rsp['data'][1]
+            entry.lower_critical_threshold = rsp['data'][2]
+            entry.lower_non_recoverable_threshold = rsp['data'][3]
+            entry.upper_non_critical_threshold = rsp['data'][4]
+            entry.upper_critical_threshold = rsp['data'][5]
+            entry.upper_non_recoverable_threshold = rsp['data'][6]
+            yield entry
+
     def get_sensor_descriptions(self):
         """Get available sensor names
 

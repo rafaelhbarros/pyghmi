@@ -2,4 +2,7 @@ AUTHORS
 ChangeLog
 dist/
 python_ipmi.egg-info/
+build
 .tox
+.eggs
+*.pyc
